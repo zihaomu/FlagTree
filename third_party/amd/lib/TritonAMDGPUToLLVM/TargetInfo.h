@@ -24,6 +24,8 @@ public:
 
   bool supportMaximumMinimum() const override;
 
+  bool isAMD() const override { return true; }
+
   Value getClusterCTAId(RewriterBase &rewriter, Location loc) const override;
 
   Value ballot(RewriterBase &rewriter, Location loc, Type type,

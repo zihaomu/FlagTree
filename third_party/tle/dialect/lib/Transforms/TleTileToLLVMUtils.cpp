@@ -115,7 +115,7 @@ SmallVector<Value> computeThreadOffsets(Location loc,
 
   auto i32Ty = rewriter.getIntegerType(32);
   Value threadId;
-  if (targetInfo.isHCU())
+  if (targetInfo.isHCU() || targetInfo.isAMD())
     threadId = getThreadId(rewriter, loc);
   else
     threadId = rewriter.create<NVVM::ThreadIdXOp>(loc, i32Ty);
