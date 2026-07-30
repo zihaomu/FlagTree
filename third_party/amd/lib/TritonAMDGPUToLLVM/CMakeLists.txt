@@ -1,3 +1,13 @@
+if(FLAGTREE_TLE)
+    set(_TLE_LIBS
+        TritonTLEAnalysis
+        TleToLLVM
+        TritonTLETransforms
+    )
+else()
+    set(_TLE_LIBS "")
+endif()
+
 add_triton_library(TritonAMDGPUToLLVM
     AsyncUtility.cpp
     AtomicRMWOpsEmitter.cpp
@@ -40,4 +50,5 @@ add_triton_library(TritonAMDGPUToLLVM
     LLVMCore
     LLVMPasses
     LLVMSupport
+    ${_TLE_LIBS}
 )
