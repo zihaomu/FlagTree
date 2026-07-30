@@ -29,6 +29,7 @@
 
 #ifdef __TLE__
 #include "tle/dialect/include/Conversion/TleToLLVM/ExclusiveCumsumOpToLLVM.h"
+#include "tle/dialect/include/Conversion/TleToLLVM/LocalPointersOpToLLVM.h"
 #include "tle/dialect/include/IR/Dialect.h"
 #include "tle/dialect/include/Transforms/PatternTleToLLVM.h"
 #endif
@@ -81,7 +82,8 @@ public:
     addLegalDialect<LLVM::LLVMDialect, ROCDL::ROCDLDialect, NVVM::NVVMDialect>();
     addIllegalOp<mlir::triton::tle::ExtractTileOp,
                  mlir::triton::tle::InsertTileOp,
-                 mlir::triton::tle::ExclusiveCumsumOp>();
+                 mlir::triton::tle::ExclusiveCumsumOp,
+                 mlir::triton::tle::LocalPointersOp>();
     addLegalOp<mlir::UnrealizedConversionCastOp>();
     markUnknownOpDynamicallyLegal([](Operation *) -> bool { return true; });
   }
@@ -216,6 +218,8 @@ struct ConvertTritonAMDGPUToLLVM
       mlir::triton::tle::populateInsertTileOpToLLVMPatterns(
           typeConverter, tlePatterns, targetInfo, commonBenefit);
       mlir::triton::tle::populateExclusiveCumsumOpToLLVMPatterns(
+          typeConverter, targetInfo, tlePatterns, commonBenefit);
+      mlir::triton::tle::populateLocalPointersOpToLLVMPatterns(
           typeConverter, targetInfo, tlePatterns, commonBenefit);
       if (failed(applyPartialConversion(mod, tleTarget,
                                         std::move(tlePatterns))))

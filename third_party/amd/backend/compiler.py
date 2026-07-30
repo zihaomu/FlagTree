@@ -1,5 +1,9 @@
 from triton.backends.compiler import BaseBackend, GPUTarget, Language
 from triton._C.libtriton import ir, passes, llvm, amd
+try:
+    from triton._C.libtriton import tle
+except ImportError:
+    tle = None
 from triton import knobs
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
@@ -212,10 +216,29 @@ class HIPBackend(BaseBackend):
         pm = ir.pass_manager(mod.context)
         pm.enable_debug()
         emuTF32 = False
+        # flagtree tle: lower the tile-level extension shared-memory ops
+        # (gpu.alloc / local_pointers / slot / copy). The lowering reuses
+        # the backend-agnostic TLE passes, which emit standard TritonGPU
+        # shared-memory ops. add_optimize_local_pointer_async_stores is
+        # intentionally omitted on AMD: it rewrites gmem->LDS staging into
+        # direct-to-LDS async copies, which RDNA (gfx11xx/gfx12xx except
+        # gfx1250) does not support; the sync load+local_store path used
+        # instead is correct on every AMD arch.
+        if tle is not None:
+            tle.raw_passes.add_tle_convert_arg_to_memdesc(pm)
+            tle.raw_passes.add_tle_remove_redundant_copy(pm)
         passes.ttgpuir.add_coalesce(pm)
         passes.ttgpuir.add_f32_dot_tc(pm, emuTF32)
         passes.ttgpuir.add_remove_layout_conversions(pm)
         passes.ttgpuir.add_optimize_thread_locality(pm)
+        if tle is not None:
+            # flagtree tle: assign LDS memory space, select shared encodings,
+            # insert barriers and fold local-pointer loads/stores.
+            tle.passes.add_early_assign_memory_space(pm)
+            tle.passes.add_select_encodings(pm)
+            tle.passes.add_insert_local_pointer_barriers(pm)
+            tle.passes.add_optimize_local_pointer_loads(pm)
+            tle.passes.add_optimize_local_pointer_stores(pm)
         amd.passes.ttgpuir.add_accelerate_matmul(pm, options.arch, options.matrix_instr_nonkdim, options.kpack)
         passes.ttgpuir.add_remove_layout_conversions(pm)
         amd.passes.ttgpuir.add_optimize_epilogue(pm)
@@ -258,6 +281,9 @@ class HIPBackend(BaseBackend):
             )
 
         amd.passes.ttgpuir.add_fold_true_cmpi(pm)
+        if tle is not None:
+            tle.passes.add_promote_local_store_staging(pm)
+            tle.passes.add_lower_barriers(pm)
         passes.common.add_canonicalizer(pm)
         passes.common.add_cse(pm)
         passes.common.add_symbol_dce(pm)
