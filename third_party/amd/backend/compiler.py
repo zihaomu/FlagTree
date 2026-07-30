@@ -353,6 +353,27 @@ class HIPBackend(BaseBackend):
             passes.llvmir.add_di_local_variable(pm)
             pm.run(mod, 'make_llir.dump_ir_extract_di_local_variables')
 
+        # Tile-level extension (TLE) ops that reach this point have not been
+        # lowered, because the AMD (hip) backend does not yet implement their
+        # TritonGPU-to-LLVM conversion patterns. Surface a clear, actionable
+        # error here instead of the cryptic "failed to translate module to LLVM
+        # IR" that llvm.to_module would otherwise raise below.
+        residual_tle_ops = set()
+
+        def _collect_residual_tle_ops(op):
+            name = op.get_name()
+            if name.startswith("tle."):
+                residual_tle_ops.add(name)
+
+        mod.walk(_collect_residual_tle_ops)
+        if residual_tle_ops:
+            unsupported = ", ".join(sorted(residual_tle_ops))
+            raise RuntimeError(
+                "Triton tile-level extension (TLE) op(s) are not supported on "
+                f"the AMD (hip) backend yet: {unsupported}. These ops have no "
+                f"TritonGPU-to-LLVM lowering for AMD (arch {options.arch}), so "
+                "compilation cannot proceed.")
+
         # LLVM-IR (MLIR) -> LLVM-IR (LLVM)
         llvm.init_targets()
         context = llvm.context()
