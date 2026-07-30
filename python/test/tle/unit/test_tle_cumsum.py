@@ -38,8 +38,6 @@ def _is_amd_hip_backend():
 
 
 def _require_cuda():
-    if _is_amd_hip_backend():
-        pytest.skip("TLE GPU ops are not yet lowered on the AMD (hip) backend")
     try:
         if _is_enflame_backend():
             pass
@@ -247,6 +245,8 @@ def test_tle_cumsum_ptx_fastpath_regression_guard():
 
 @pytest.mark.skipif(not _is_hcu_backend(),
                     reason="HCU ISA-specific regression guard not applicable on non-HCU backends")
+@pytest.mark.skipif(_is_amd_hip_backend(),
+                    reason="HCU amdgcn ISA regression guard (warp=64) is not applicable on AMD RDNA")
 def test_tle_cumsum_amdgcn_fastpath_regression_guard():
     block = 1024
     x = torch.randint(-1024, 1024, (block, ), device="cuda", dtype=torch.int32)
@@ -282,6 +282,8 @@ def test_tle_cumsum_amdgcn_fastpath_regression_guard():
         "Detected predicated ds_write: possible regression to generic path"
 
 
+@pytest.mark.skipif(_is_amd_hip_backend(),
+                    reason="tle.gpu.alloc/local_ptr shared-memory ops are not yet lowered on the AMD (hip) backend")
 def test_tle_cumsum_call_shared_frame_regression():
     block = 512
     num_warps = block // threads_per_warp
@@ -314,6 +316,8 @@ def test_tle_cumsum_call_shared_frame_regression():
     torch.testing.assert_close(sentinel, expected_sentinel)
 
 
+@pytest.mark.skipif(_is_amd_hip_backend(),
+                    reason="tle.gpu.alloc/local_ptr shared-memory ops are not yet lowered on the AMD (hip) backend")
 def test_tle_cumsum_scalar_base_addptr_alias_regression():
     block = 512
     num_warps = block // threads_per_warp
