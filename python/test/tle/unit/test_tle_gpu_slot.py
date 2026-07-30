@@ -15,20 +15,7 @@ def _is_enflame_backend():
     return target.backend == "gcu"
 
 
-def _is_amd_hip_backend():
-    # AMD ROCm and HCU both report GPUTarget(backend="hip"); tell them apart
-    # by the active driver module. The AMD (hip) backend does not yet lower the
-    # TLE tile ops, so gate the affected tests until that lowering lands.
-    try:
-        driver = triton.runtime.driver.active
-        return type(driver).__module__.startswith("triton.backends.amd")
-    except Exception:
-        return False
-
-
 def _require_cuda():
-    if _is_amd_hip_backend():
-        pytest.skip("TLE GPU ops are not yet lowered on the AMD (hip) backend")
     try:
         if _is_enflame_backend():
             pass
