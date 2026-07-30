@@ -5,6 +5,17 @@ import triton.experimental.tle.language as tle
 import pytest
 
 
+def _is_amd_hip_backend():
+    # AMD ROCm and HCU both report GPUTarget(backend="hip"); tell them apart
+    # by the active driver module. The AMD (hip) backend does not yet lower the
+    # TLE tile ops, so gate the affected tests until that lowering lands.
+    try:
+        driver = triton.runtime.driver.active
+        return type(driver).__module__.startswith("triton.backends.amd")
+    except Exception:
+        return False
+
+
 @triton.jit
 def extract_tile_kernel(x_ptr, out_ptr, M: tl.constexpr, N: tl.constexpr):
     # Set M, N as input matrix dimensions
@@ -24,6 +35,8 @@ def extract_tile_kernel(x_ptr, out_ptr, M: tl.constexpr, N: tl.constexpr):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for this test")
+@pytest.mark.skipif(_is_amd_hip_backend(),
+                    reason="tle.extract_tile is not yet lowered on the AMD (hip) backend")
 def test_extract_tile_kernel():
     # Set matrix dimensions
     M, N = 512, 512

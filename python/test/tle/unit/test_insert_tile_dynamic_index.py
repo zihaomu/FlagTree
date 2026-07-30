@@ -5,6 +5,17 @@ import triton.experimental.tle.language as tle
 import pytest
 
 
+def _is_amd_hip_backend():
+    # AMD ROCm and HCU both report GPUTarget(backend="hip"); tell them apart
+    # by the active driver module. The AMD (hip) backend does not yet lower the
+    # TLE tile ops, so gate the affected tests until that lowering lands.
+    try:
+        driver = triton.runtime.driver.active
+        return type(driver).__module__.startswith("triton.backends.amd")
+    except Exception:
+        return False
+
+
 @triton.jit
 def simple_insert_kernel(x_ptr, y_ptr, stride_xb, stride_xm, stride_xn, stride_ym, stride_yn, BLOCK_M: tl.constexpr,
                          BLOCK_N: tl.constexpr, TILE_M: tl.constexpr, TILE_N: tl.constexpr):
@@ -43,6 +54,8 @@ def simple_insert_kernel(x_ptr, y_ptr, stride_xb, stride_xm, stride_xn, stride_y
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.skipif(_is_amd_hip_backend(),
+                    reason="tle.insert_tile is not yet lowered on the AMD (hip) backend")
 def test_simple_insert_kernel_inserts_tiles_correctly():
     B = 2  # 2 layers (Z dimension)
     M, N = 32, 32  # 32x32 size per layer

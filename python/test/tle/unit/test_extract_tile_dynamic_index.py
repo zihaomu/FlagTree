@@ -5,6 +5,17 @@ import triton.experimental.tle.language as tle
 import pytest
 
 
+def _is_amd_hip_backend():
+    # AMD ROCm and HCU both report GPUTarget(backend="hip"); tell them apart
+    # by the active driver module. The AMD (hip) backend does not yet lower the
+    # TLE tile ops, so gate the affected tests until that lowering lands.
+    try:
+        driver = triton.runtime.driver.active
+        return type(driver).__module__.startswith("triton.backends.amd")
+    except Exception:
+        return False
+
+
 @triton.jit
 def simple_extract_kernel(x_ptr, out_ptr, stride_xb, stride_xm, stride_xn, stride_ob, stride_om, stride_on,
                           BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, TILE_M: tl.constexpr, TILE_N: tl.constexpr):
@@ -37,6 +48,8 @@ def simple_extract_kernel(x_ptr, out_ptr, stride_xb, stride_xm, stride_xn, strid
 # ------------------------------------------------------------
 
 
+@pytest.mark.skipif(_is_amd_hip_backend(),
+                    reason="tle.extract_tile is not yet lowered on the AMD (hip) backend")
 def test_simple_extract_kernel_cuda():
     if not torch.cuda.is_available():
         pytest.skip("CUDA is not available; skipping Triton CUDA test.")
