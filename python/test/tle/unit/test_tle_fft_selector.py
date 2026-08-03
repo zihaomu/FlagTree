@@ -30,13 +30,13 @@ def test_fft_provider_gfx1201_boundaries(monkeypatch):
     _set_target(monkeypatch, module, "hip", "gfx1201")
 
     assert module._fft_provider(2048, 256, torch.float32) == "triton"
-    assert module._fft_provider(4096, 64, torch.float32) == "triton"
-    assert module._fft_provider(4096, 128, torch.float32) == "triton"
+    assert module._fft_provider(4096, 64, torch.float32) == "tle"
+    assert module._fft_provider(4096, 128, torch.float32) == "tle"
+    assert module._fft_provider(4096, 512, torch.float32) == "tle"
     assert module._fft_provider(4096, 256, torch.float16) == "tle"
     assert module._fft_provider(4096, 256, torch.bfloat16) == "tle"
     assert module._fft_provider(4096, 256, torch.complex64) == "tle"
     assert module._fft_provider(4096, 256, torch.complex128) == "triton"
-    assert module._fft_provider(4096, 512, torch.float32) == "triton"
     assert module._fft_provider(3584, 1024, torch.float32) == "tle"
     assert module._fft_provider(4096, 1024, torch.float32) == "tle"
     assert module._fft_provider(4608, 1024, torch.float32) == "tle"

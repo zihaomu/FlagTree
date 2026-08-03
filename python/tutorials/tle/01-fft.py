@@ -1115,6 +1115,8 @@ def _fft_provider(m: int, n: int, input_dtype: torch.dtype) -> str:
             torch.bfloat16,
             torch.complex64,
         )
+        if m == 4096 and input_dtype == torch.float32 and n in (64, 128, 256, 512, 1024):
+            return "tle"
         if 4096 <= m <= 8192 and n == 256 and input_dtype in supported_inputs:
             return "tle"
         if 3584 <= m <= 4608 and n == 1024 and input_dtype == torch.float32:
