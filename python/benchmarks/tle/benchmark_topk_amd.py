@@ -63,19 +63,20 @@ def _num_warps(block_n: int) -> int:
 
 
 def _provider_configs(n: int) -> dict[str, dict[str, object]]:
-    block_n = min(max(32, triton.next_power_of_2(n)), 1024)
+    radix_block_n, radix_bits, radix_num_warps = TOPK._radix_launch_config(n)
+    triton_block_n = min(max(32, triton.next_power_of_2(n)), 1024)
     return {
         "radix": {
             "algorithm": "tle_shared_memory_radix_select",
-            "block_n": block_n,
-            "radix_bits": 4,
-            "num_warps": _num_warps(block_n),
+            "block_n": radix_block_n,
+            "radix_bits": radix_bits,
+            "num_warps": radix_num_warps,
             "num_stages": 1,
         },
         "triton": {
             "algorithm": "triton_streaming_topk",
-            "block_n": block_n,
-            "num_warps": _num_warps(block_n),
+            "block_n": triton_block_n,
+            "num_warps": _num_warps(triton_block_n),
             "num_stages": 1,
         },
         "torch": {"algorithm": "torch.topk", "sorted": False},

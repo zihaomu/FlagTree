@@ -230,6 +230,27 @@ def topk_kernel_streaming_triton(
     tl.store(Yi + pid * stride_ym + offs_k, y_idx)
 
 
+def _radix_launch_config(n_cols: int) -> tuple[int, int, int]:
+    target = triton.runtime.driver.active.get_current_target()
+    is_gfx1201 = target.backend == "hip" and target.arch == "gfx1201"
+
+    block_n = min(max(32, triton.next_power_of_2(n_cols)), 1024)
+    if is_gfx1201 and n_cols >= 16384:
+        block_n = 512
+
+    if block_n <= 64:
+        num_warps = 2
+    elif block_n <= 128:
+        num_warps = 4
+    else:
+        num_warps = 8
+    if is_gfx1201 and n_cols >= 8192:
+        num_warps = 16
+
+    radix_bits = 8 if is_gfx1201 else 4
+    return block_n, radix_bits, num_warps
+
+
 def triton_radix_topk(
     x: torch.Tensor,
     k: int,
@@ -259,17 +280,7 @@ def triton_radix_topk(
 
     num_batch = n_rows
     num_blocks = num_batch
-    # Tuned heuristic from empirical sweeps:
-    # - medium/large N prefers BLOCK_N=1024 and higher warp count
-    # - very small N should avoid over-large BLOCK_N
-    block_n_radix = max(32, triton.next_power_of_2(n_cols))
-    block_n_radix = min(block_n_radix, 1024)
-    if block_n_radix <= 64:
-        num_warps = 2
-    elif block_n_radix <= 128:
-        num_warps = 4
-    else:
-        num_warps = 8
+    block_n_radix, radix_bits, num_warps = _radix_launch_config(n_cols)
     topk_kernel_radix_triton[(num_blocks, )](
         x,
         y_vals,
@@ -279,7 +290,7 @@ def triton_radix_topk(
         n_cols,
         K=k,
         BLOCK_N=block_n_radix,
-        RADIX_BITS=4,
+        RADIX_BITS=radix_bits,
         num_warps=num_warps,
         num_stages=1,
     )
