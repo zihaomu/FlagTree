@@ -230,21 +230,23 @@ def _tle_tiled_matmul_kernel(
     BLOCK_N: tl.constexpr,
     BLOCK_K: tl.constexpr,
     SLICE_WIDTH: tl.constexpr,
+    INPUT_IS_BF16: tl.constexpr,
 ):
     pid_m = tl.program_id(0)
     pid_n = tl.program_id(1)
     offsets_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offsets_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    input_dtype = tl.bfloat16 if INPUT_IS_BF16 else tl.float16
     smem_a = tle.gpu.alloc(
         [BLOCK_M, BLOCK_K],
-        dtype=tl.float16,
+        dtype=input_dtype,
         layout=None,
         scope=tle.gpu.smem,
         nv_mma_shared_layout=False,
     )
     smem_b = tle.gpu.alloc(
         [BLOCK_K, BLOCK_N],
-        dtype=tl.float16,
+        dtype=input_dtype,
         layout=None,
         scope=tle.gpu.smem,
         nv_mma_shared_layout=False,
@@ -607,6 +609,7 @@ def _run_matmul(
     k: int,
     rounds: int,
     num_warps: dict[str, int],
+    input_dtype: str,
 ) -> dict[str, object]:
     block_m = 32
     block_n = 32
@@ -614,8 +617,10 @@ def _run_matmul(
     slice_width = 16
     if m % block_m or n % block_n or k % block_k:
         raise ValueError("matmul dimensions must be divisible by their block sizes")
-    a = torch.randn((m, k), device="cuda", dtype=torch.float16)
-    b = torch.randn((k, n), device="cuda", dtype=torch.float16)
+    dtype_map = {"fp16": torch.float16, "bf16": torch.bfloat16}
+    torch_dtype = dtype_map[input_dtype]
+    a = torch.randn((m, k), device="cuda", dtype=torch_dtype)
+    b = torch.randn((k, n), device="cuda", dtype=torch_dtype)
     triton_out = torch.empty((m, n), device="cuda", dtype=torch.float32)
     tle_out = torch.empty_like(triton_out)
     grid = (m // block_m, n // block_n)
@@ -633,7 +638,12 @@ def _run_matmul(
         a, b, triton_out, **constants, num_warps=num_warps["triton"]
     )
     tle_launch = lambda: _tle_tiled_matmul_kernel[grid](
-        a, b, tle_out, **constants, num_warps=num_warps["tle"]
+        a,
+        b,
+        tle_out,
+        **constants,
+        INPUT_IS_BF16=input_dtype == "bf16",
+        num_warps=num_warps["tle"],
     )
     triton_launch()
     tle_launch()
@@ -647,7 +657,7 @@ def _run_matmul(
             "m": m,
             "n": n,
             "k": k,
-            "dtype": "float16",
+            "dtype": input_dtype,
             "accumulator_dtype": "float32",
             "block_m": block_m,
             "block_n": block_n,
@@ -675,6 +685,11 @@ def main() -> None:
     )
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--matmul-dtype",
+        choices=("fp16", "bf16"),
+        default="fp16",
+    )
     args = parser.parse_args()
 
     if args.rounds < 1:
@@ -707,7 +722,7 @@ def main() -> None:
         size = 64 if args.quick else 512
         k = 64 if args.quick else 256
         results.append(
-            _run_matmul(size, size, k, args.rounds, num_warps["matmul"])
+            _run_matmul(size, size, k, args.rounds, num_warps["matmul"], args.matmul_dtype)
         )
 
     report = {
