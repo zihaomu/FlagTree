@@ -38,7 +38,7 @@ NUM_WARPS_CONFIGS = {
         "axpy": {"triton": 4, "tle": 1},
         "copy": {"triton": 2, "tle": 2},
         "gather": {"triton": 2, "tle": 2},
-        "matmul": {"triton": 1, "tle": 1},
+        "matmul": {"triton": 1, "tle": 4},
     },
 }
 
