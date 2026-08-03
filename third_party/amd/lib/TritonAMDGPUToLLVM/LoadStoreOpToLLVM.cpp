@@ -1887,10 +1887,17 @@ struct AtomicRMWOpConversion
           !enableIntraWaveReduce;
       numElems = tensorTy.getNumElements();
 
-      auto threadOrder = getThreadOrder(tensorTy);
-      unsigned contigWithinLanes =
-          axisAnalysisPass.getAxisInfo(ptr)->getContiguity(threadOrder.front());
-      enableIntraWaveReduce &= contigWithinLanes == 1;
+      if (enableIntraWaveReduce) {
+        auto threadOrder = getThreadOrder(tensorTy);
+        auto *axisInfo = axisAnalysisPass.getAxisInfo(ptr);
+        if (!axisInfo || threadOrder.empty() ||
+            threadOrder.front() >= axisInfo->getContiguity().size()) {
+          enableIntraWaveReduce = false;
+        } else {
+          enableIntraWaveReduce &=
+              axisInfo->getContiguity(threadOrder.front()) == 1;
+        }
+      }
     }
 
     auto vecTy = vec_ty(valueElemTy, vec);

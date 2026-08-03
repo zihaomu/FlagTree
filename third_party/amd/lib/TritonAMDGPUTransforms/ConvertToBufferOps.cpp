@@ -146,6 +146,13 @@ bool canUseBufferOps(Value ptr,
     return false;
   LDBG("Pattern matched");
 
+  auto basePtrTy =
+      dyn_cast<triton::PointerType>(maybeSplatOp.getSrc().getType());
+  if (!basePtrTy || basePtrTy.getAddressSpace() != 1) {
+    LDBG("Buffer ops require a global-memory base pointer");
+    return false;
+  }
+
   // 2. check if the offset is either 32 or 64-bit.
   Value offset = addPtrOp.getOffset();
   auto ofstBit =

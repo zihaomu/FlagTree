@@ -942,3 +942,26 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.targ
     tt.return
   }
 }
+
+// -----
+
+#shared_blocked = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [64], warpsPerCTA = [1], order = [0]}>
+module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, ttg.target = "hip:gfx942", "ttg.threads-per-warp" = 64 : i32} {
+  // COMMON-LABEL: tt.func @shared_memory_not_bufferized
+  tt.func @shared_memory_not_bufferized(%base: !tt.ptr<i32, 3>) {
+    %offsets = tt.make_range {end = 64 : i32, start = 0 : i32} : tensor<64xi32, #shared_blocked>
+    %base_tensor = tt.splat %base : !tt.ptr<i32, 3> -> tensor<64x!tt.ptr<i32, 3>, #shared_blocked>
+    %ptrs = tt.addptr %base_tensor, %offsets : tensor<64x!tt.ptr<i32, 3>, #shared_blocked>, tensor<64xi32, #shared_blocked>
+    %ones = arith.constant dense<1> : tensor<64xi32, #shared_blocked>
+    %mask = arith.constant dense<true> : tensor<64xi1, #shared_blocked>
+    // COMMON-NOT: amdg.buffer_
+    // COMMON: %[[VALUE:.*]] = tt.load %{{.*}} : tensor<64x!tt.ptr<i32, 3>, #[[ENC:.*]]>
+    %value = tt.load %ptrs : tensor<64x!tt.ptr<i32, 3>, #shared_blocked>
+    // COMMON: tt.store %{{.*}}, %[[VALUE]] : tensor<64x!tt.ptr<i32, 3>, #[[ENC]]>
+    tt.store %ptrs, %value : tensor<64x!tt.ptr<i32, 3>, #shared_blocked>
+    // COMMON: tt.atomic_rmw add, relaxed, cta
+    %old = tt.atomic_rmw add, relaxed, cta, %ptrs, %ones, %mask : (tensor<64x!tt.ptr<i32, 3>, #shared_blocked>, tensor<64xi32, #shared_blocked>, tensor<64xi1, #shared_blocked>) -> tensor<64xi32, #shared_blocked>
+    // COMMON-NOT: amdg.buffer_
+    tt.return
+  }
+}

@@ -31,6 +31,34 @@ def _convert_to_uint16_hi8(x):
 
 
 @triton.jit
+def _dynamic_local_ptr_histogram_kernel(x_ptr, out_ptr, BLOCK_SIZE: tl.constexpr):
+    RADIX_SIZE: tl.constexpr = 256
+    bins = tl.arange(0, RADIX_SIZE)
+    offsets = tl.arange(0, BLOCK_SIZE)
+    counts = tle.gpu.alloc(
+        [RADIX_SIZE],
+        dtype=tl.int32,
+        layout=None,
+        scope=tle.gpu.smem,
+        nv_mma_shared_layout=False,
+    )
+    count_ptrs = tle.gpu.local_ptr(counts, (bins, ))
+    tl.store(count_ptrs, tl.zeros([RADIX_SIZE], dtype=tl.int32))
+    tl.debug_barrier()
+
+    digits = tl.load(x_ptr + offsets)
+    dynamic_count_ptrs = tle.gpu.local_ptr(counts, (digits, ))
+    tl.atomic_add(
+        dynamic_count_ptrs,
+        tl.full([BLOCK_SIZE], 1, tl.int32),
+        sem="relaxed",
+        scope="cta",
+    )
+    tl.debug_barrier()
+    tl.store(out_ptr + bins, tl.load(count_ptrs))
+
+
+@triton.jit
 def _minimal_topk_smem_overflow_fallback_fullscan(
     row_ptr,
     out_row,
@@ -275,6 +303,24 @@ def _minimal_fallback_kernel(
         TOPK=TOPK,
         BLOCK_SIZE=BLOCK_SIZE,
     )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_tle_dynamic_local_ptr_shared_histogram():
+    block_size = 1024
+    x = (torch.arange(block_size, device=_DEVICE, dtype=torch.int32) * 37 + 11) % 256
+    out = torch.empty(256, device=_DEVICE, dtype=torch.int32)
+
+    _dynamic_local_ptr_histogram_kernel[(1, )](
+        x,
+        out,
+        BLOCK_SIZE=block_size,
+        num_warps=8,
+        num_stages=1,
+    )
+
+    expected = torch.bincount(x.to(torch.int64), minlength=256).to(torch.int32)
+    torch.testing.assert_close(out, expected)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
