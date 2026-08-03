@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import random
 from pathlib import Path
 from types import ModuleType
 from typing import Callable
@@ -19,6 +18,14 @@ import benchmark_amd as amd_bench
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TOPK_TUTORIAL_PATH = REPO_ROOT / "python" / "tutorials" / "tle" / "03-topk.py"
+BALANCED_PROVIDER_ORDERS = (
+    ("radix", "triton", "torch"),
+    ("triton", "torch", "radix"),
+    ("torch", "radix", "triton"),
+    ("torch", "triton", "radix"),
+    ("triton", "radix", "torch"),
+    ("radix", "torch", "triton"),
+)
 SHAPES = {
     "short-small-k": {"m": 64, "n": 128, "k": 8, "row_class": "short", "k_class": "small"},
     "short-medium-k": {"m": 64, "n": 1024, "k": 32, "row_class": "short", "k_class": "medium"},
@@ -91,20 +98,32 @@ def _comparison(
 def _measure_providers(
     launches: dict[str, Callable[[], None]],
     rounds: int,
+    stabilization_rounds: int,
     warmup_ms: int,
     rep_ms: int,
 ) -> dict[str, object]:
     samples: dict[str, list[dict[str, float]]] = {provider: [] for provider in launches}
+    stabilization_provider_order: list[list[str]] = []
     provider_order_by_round: list[list[str]] = []
 
     for launch in launches.values():
         launch()
     torch.cuda.synchronize()
 
-    rng = random.Random(amd_bench.RANDOM_SEED)
-    for _ in range(rounds):
-        order = list(launches)
-        rng.shuffle(order)
+    for round_index in range(stabilization_rounds):
+        order = list(BALANCED_PROVIDER_ORDERS[round_index % len(BALANCED_PROVIDER_ORDERS)])
+        stabilization_provider_order.append(order)
+        for provider in order:
+            triton.testing.do_bench(
+                launches[provider],
+                warmup=warmup_ms,
+                rep=rep_ms,
+                quantiles=amd_bench.QUANTILES,
+            )
+
+    for round_index in range(rounds):
+        order_index = stabilization_rounds + round_index
+        order = list(BALANCED_PROVIDER_ORDERS[order_index % len(BALANCED_PROVIDER_ORDERS)])
         provider_order_by_round.append(order)
         for provider in order:
             p50_ms, p20_ms, p80_ms = triton.testing.do_bench(
@@ -125,6 +144,7 @@ def _measure_providers(
     }
     return {
         "providers": summaries,
+        "stabilization_provider_order": stabilization_provider_order,
         "provider_order_by_round": provider_order_by_round,
         "radix_vs_triton": _comparison(
             samples["triton"],
@@ -152,6 +172,7 @@ def _run_shape(
     shape: dict[str, object],
     dtype_name: str,
     rounds: int,
+    stabilization_rounds: int,
     warmup_ms: int,
     rep_ms: int,
 ) -> dict[str, object]:
@@ -216,7 +237,13 @@ def _run_shape(
             "provider_configs": _provider_configs(n),
         },
         "correct": True,
-        "measurements": _measure_providers(launches, rounds, warmup_ms, rep_ms),
+        "measurements": _measure_providers(
+            launches,
+            rounds,
+            stabilization_rounds,
+            warmup_ms,
+            rep_ms,
+        ),
     }
 
 
@@ -224,7 +251,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--shape", choices=("all", *SHAPES), default="all")
     parser.add_argument("--dtype", choices=("float16", "float32", "bfloat16"), default="float16")
-    parser.add_argument("--rounds", type=int, default=5)
+    parser.add_argument("--rounds", type=int, default=6)
+    parser.add_argument("--stabilization-rounds", type=int, default=1)
     parser.add_argument("--warmup-ms", type=int, default=amd_bench.BENCH_WARMUP_MS)
     parser.add_argument("--rep-ms", type=int, default=amd_bench.BENCH_REP_MS)
     parser.add_argument("--output", type=Path)
@@ -232,6 +260,8 @@ def main() -> None:
 
     if args.rounds < 1:
         parser.error("--rounds must be at least 1")
+    if args.stabilization_rounds < 0:
+        parser.error("--stabilization-rounds cannot be negative")
     if args.warmup_ms < 1 or args.rep_ms < 1:
         parser.error("--warmup-ms and --rep-ms must be at least 1")
 
@@ -243,6 +273,7 @@ def main() -> None:
             shape,
             args.dtype,
             args.rounds,
+            args.stabilization_rounds,
             args.warmup_ms,
             args.rep_ms,
         )
@@ -253,10 +284,11 @@ def main() -> None:
         "environment": amd_bench._environment(),
         "measurement_config": {
             "rounds": args.rounds,
+            "stabilization_rounds_discarded": args.stabilization_rounds,
             "warmup_ms": args.warmup_ms,
             "rep_ms": args.rep_ms,
             "quantiles": list(amd_bench.QUANTILES),
-            "provider_order": "randomized per round with fixed seed",
+            "provider_order": "balanced cycle over all six provider permutations",
             "random_seed": amd_bench.RANDOM_SEED,
             "bootstrap_samples": amd_bench.BOOTSTRAP_SAMPLES,
             "confidence_level": 0.95,
