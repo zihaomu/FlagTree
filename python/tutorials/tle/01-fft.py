@@ -1106,10 +1106,19 @@ def _fft_num_warps(provider: str, m: int, n: int) -> int:
     return configs[provider].get(n, 4)
 
 
-def _fft_provider(m: int, n: int) -> str:
+def _fft_provider(m: int, n: int, input_dtype: torch.dtype) -> str:
     target = triton.runtime.driver.active.get_current_target()
     if target.backend == "hip" and target.arch == "gfx1201":
-        if 4096 <= m <= 8192 and n in (64, 128, 256, 512):
+        if not 4096 <= m <= 8192:
+            return "triton"
+        if n == 128 and input_dtype == torch.float32:
+            return "tle"
+        if n == 256 and input_dtype in (
+            torch.float16,
+            torch.float32,
+            torch.bfloat16,
+            torch.complex64,
+        ):
             return "tle"
         return "triton"
     return "tle"
@@ -1223,7 +1232,7 @@ def tle_fft(x: torch.Tensor) -> torch.Tensor:
 
 def fft(x: torch.Tensor) -> torch.Tensor:
     m, n = x.shape
-    if _fft_provider(m, n) == "triton":
+    if _fft_provider(m, n, x.dtype) == "triton":
         return triton_fft(x)
     return tle_fft(x)
 
@@ -1294,9 +1303,9 @@ def run_correctness(m: int, n: int, dtype: torch.dtype, complex_input: bool):
         torch.testing.assert_close(y_selected, ref, rtol=1e-3, atol=1e-3)
     if _HAVE_CUTILE:
         torch.testing.assert_close(y_cutile, ref, rtol=1e-3, atol=1e-3)
-        print(f"Correctness check passed (triton/tle/cutile/selected={_fft_provider(m, n)}).")
+        print(f"Correctness check passed (triton/tle/cutile/selected={_fft_provider(m, n, x.dtype)}).")
     else:
-        print(f"Correctness check passed (triton/tle/selected={_fft_provider(m, n)}).")
+        print(f"Correctness check passed (triton/tle/selected={_fft_provider(m, n, x.dtype)}).")
 
 
 if "--only_unit_test" in sys.argv:

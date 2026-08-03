@@ -145,6 +145,7 @@ def _run_shape(
     shape: dict[str, int],
     dtype_name: str,
     complex_input: bool,
+    measurement_mode: str,
     rounds: int,
     stabilization_rounds: int,
     warmup_ms: int,
@@ -236,7 +237,19 @@ def _run_shape(
         atol=1e-3,
     )
 
-    selected_provider = FFT._fft_provider(m, n)
+    if measurement_mode == "wrapper":
+        triton_result = FFT.triton_fft(x)
+        tle_result = FFT.tle_fft(x)
+        torch_result = torch.fft.fft(x.to(torch.complex64))
+        torch.testing.assert_close(triton_result, torch_result, rtol=1e-3, atol=1e-3)
+        torch.testing.assert_close(tle_result, torch_result, rtol=1e-3, atol=1e-3)
+        launches = {
+            "triton": lambda: FFT.triton_fft(x),
+            "tle": lambda: FFT.tle_fft(x),
+            "torch": lambda: torch.fft.fft(x.to(torch.complex64)),
+        }
+
+    selected_provider = FFT._fft_provider(m, n, x.dtype)
     measurements = _measure_providers(
         launches,
         rounds,
@@ -262,6 +275,7 @@ def _run_shape(
             "n": n,
             "dtype": dtype_name,
             "complex_input": complex_input,
+            "measurement_mode": measurement_mode,
             "provider_configs": {
                 "triton": {
                     "algorithm": "global_ping_pong_radix4_fft",
@@ -275,7 +289,7 @@ def _run_shape(
                 },
                 "torch": {
                     "algorithm": "torch.fft.fft",
-                    "output_preallocated": True,
+                    "output_preallocated": measurement_mode == "dispatch",
                 },
             },
         },
@@ -289,6 +303,11 @@ def main() -> None:
     parser.add_argument("--shape", choices=("all", *SHAPES), default="all")
     parser.add_argument("--dtype", choices=("float16", "float32", "bfloat16"), default="float32")
     parser.add_argument("--complex-input", action="store_true")
+    parser.add_argument(
+        "--measurement-mode",
+        choices=("wrapper", "dispatch"),
+        default="wrapper",
+    )
     parser.add_argument("--rounds", type=int, default=6)
     parser.add_argument("--stabilization-rounds", type=int, default=1)
     parser.add_argument("--warmup-ms", type=int, default=amd_bench.BENCH_WARMUP_MS)
@@ -311,6 +330,7 @@ def main() -> None:
             shape,
             args.dtype,
             args.complex_input,
+            args.measurement_mode,
             args.rounds,
             args.stabilization_rounds,
             args.warmup_ms,
@@ -332,8 +352,17 @@ def main() -> None:
             "bootstrap_samples": amd_bench.BOOTSTRAP_SAMPLES,
             "confidence_level": 0.95,
             "confidence_method": "paired bootstrap of ratio of p50 medians",
-            "output_allocation": "all provider outputs and scratch preallocated",
-            "plan_setup": "bit reversal, twiddles, and input conversion excluded from timing",
+            "measurement_mode": args.measurement_mode,
+            "output_allocation": (
+                "input conversion, workspace, and output allocation included"
+                if args.measurement_mode == "wrapper"
+                else "all provider outputs and scratch preallocated"
+            ),
+            "plan_setup": (
+                "bit reversal and twiddle tables cached; cache construction excluded"
+                if args.measurement_mode == "wrapper"
+                else "bit reversal, twiddles, and input conversion excluded from timing"
+            ),
             "cache_policy": "triton.testing.do_bench clears L2 before every timed sample",
         },
         "results": results,
