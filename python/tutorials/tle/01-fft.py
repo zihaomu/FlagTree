@@ -1109,16 +1109,15 @@ def _fft_num_warps(provider: str, m: int, n: int) -> int:
 def _fft_provider(m: int, n: int, input_dtype: torch.dtype) -> str:
     target = triton.runtime.driver.active.get_current_target()
     if target.backend == "hip" and target.arch == "gfx1201":
-        if not 4096 <= m <= 8192:
-            return "triton"
-        if n == 128 and input_dtype == torch.float32:
-            return "tle"
-        if n == 256 and input_dtype in (
+        supported_inputs = (
             torch.float16,
             torch.float32,
             torch.bfloat16,
             torch.complex64,
-        ):
+        )
+        if 4096 <= m <= 8192 and n == 256 and input_dtype in supported_inputs:
+            return "tle"
+        if 3584 <= m <= 4608 and n == 1024 and input_dtype == torch.float32:
             return "tle"
         return "triton"
     return "tle"
