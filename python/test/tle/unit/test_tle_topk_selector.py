@@ -42,3 +42,21 @@ def test_topk_provider_other_targets_preserve_radix(monkeypatch):
     for backend, arch in (("hip", "gfx942"), ("cuda", "sm90")):
         _set_target(monkeypatch, module, backend, arch)
         assert module._topk_provider(128, 8) == "radix"
+
+
+def test_triton_launch_config_gfx1201_batch_crossover(monkeypatch):
+    module = _load_topk_module()
+    _set_target(monkeypatch, module, "hip", "gfx1201")
+
+    assert module._triton_launch_config(64, 1024, 32) == (1024, 16)
+    assert module._triton_launch_config(64, 8192, 128) == (1024, 16)
+    assert module._triton_launch_config(128, 32768, 256) == (1024, 8)
+    assert module._triton_launch_config(64, 8192, 8) == (1024, 8)
+    assert module._triton_launch_config(64, 128, 32) == (128, 4)
+
+
+def test_triton_launch_config_other_targets_preserve_defaults(monkeypatch):
+    module = _load_topk_module()
+    _set_target(monkeypatch, module, "hip", "gfx942")
+
+    assert module._triton_launch_config(64, 8192, 128) == (1024, 8)

@@ -54,17 +54,9 @@ def _torch_dtype(name: str) -> torch.dtype:
     }[name]
 
 
-def _num_warps(block_n: int) -> int:
-    if block_n <= 64:
-        return 2
-    if block_n <= 128:
-        return 4
-    return 8
-
-
-def _provider_configs(n: int) -> dict[str, dict[str, object]]:
+def _provider_configs(m: int, n: int, k: int) -> dict[str, dict[str, object]]:
     radix_block_n, radix_bits, radix_num_warps = TOPK._radix_launch_config(n)
-    triton_block_n = min(max(32, triton.next_power_of_2(n)), 1024)
+    triton_block_n, triton_num_warps = TOPK._triton_launch_config(m, n, k)
     return {
         "radix": {
             "algorithm": "tle_shared_memory_radix_select",
@@ -76,7 +68,7 @@ def _provider_configs(n: int) -> dict[str, dict[str, object]]:
         "triton": {
             "algorithm": "triton_streaming_topk",
             "block_n": triton_block_n,
-            "num_warps": _num_warps(triton_block_n),
+            "num_warps": triton_num_warps,
             "num_stages": 1,
         },
         "torch": {"algorithm": "torch.topk", "sorted": False},
@@ -235,7 +227,7 @@ def _run_shape(
             "dtype": dtype_name,
             "row_class": shape["row_class"],
             "k_class": shape["k_class"],
-            "provider_configs": _provider_configs(n),
+            "provider_configs": _provider_configs(m, n, k),
         },
         "correct": True,
         "measurements": _measure_providers(

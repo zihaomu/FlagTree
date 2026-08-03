@@ -297,6 +297,27 @@ def triton_radix_topk(
     return y_vals, y_idx
 
 
+def _triton_launch_config(n_rows: int, n_cols: int, k: int) -> tuple[int, int]:
+    block_n = max(32, triton.next_power_of_2(min(n_cols, 1024)))
+    if block_n <= 64:
+        num_warps = 2
+    elif block_n <= 128:
+        num_warps = 4
+    else:
+        num_warps = 8
+
+    target = triton.runtime.driver.active.get_current_target()
+    if (
+        target.backend == "hip"
+        and target.arch == "gfx1201"
+        and n_rows <= 64
+        and k >= 32
+        and block_n > 128
+    ):
+        num_warps = 16
+    return block_n, num_warps
+
+
 def triton_topk(
     x: torch.Tensor,
     k: int,
@@ -326,13 +347,7 @@ def triton_topk(
         assert y_idx.dtype == torch.int32
         assert y_idx.device == x.device
 
-    block_n = max(32, triton.next_power_of_2(min(n_cols, 1024)))
-    if block_n <= 64:
-        num_warps = 2
-    elif block_n <= 128:
-        num_warps = 4
-    else:
-        num_warps = 8
+    block_n, num_warps = _triton_launch_config(n_rows, n_cols, k)
 
     topk_kernel_streaming_triton[(n_rows, )](
         x,
