@@ -217,9 +217,27 @@ def _run_shape(
         torch.testing.assert_close(actual_values, expected_values, rtol=1e-3, atol=1e-3)
         torch.testing.assert_close(x.gather(1, indices.to(torch.int64)), values, rtol=1e-3, atol=1e-3)
 
+    selected_provider = TOPK._topk_provider(n, k)
+    measurements = _measure_providers(
+        launches,
+        rounds,
+        stabilization_rounds,
+        warmup_ms,
+        rep_ms,
+    )
+    if selected_provider == "radix":
+        selected_vs_triton = dict(measurements["radix_vs_triton"])
+        selected_vs_torch = dict(measurements["radix_vs_torch"])
+    else:
+        selected_vs_triton = {"speedup": 1.0, "speedup_95_ci": [1.0, 1.0]}
+        selected_vs_torch = dict(measurements["triton_vs_torch"])
+    measurements["selected_vs_triton"] = selected_vs_triton
+    measurements["selected_vs_torch"] = selected_vs_torch
+
     return {
         "case": "topk",
         "shape_name": shape_name,
+        "selected_provider": selected_provider,
         "parameters": {
             "m": m,
             "n": n,
@@ -230,13 +248,7 @@ def _run_shape(
             "provider_configs": _provider_configs(m, n, k),
         },
         "correct": True,
-        "measurements": _measure_providers(
-            launches,
-            rounds,
-            stabilization_rounds,
-            warmup_ms,
-            rep_ms,
-        ),
+        "measurements": measurements,
     }
 
 
