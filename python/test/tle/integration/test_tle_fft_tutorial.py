@@ -26,3 +26,4 @@ def test_fft_tutorial_supported_sizes(n):
 
     torch.testing.assert_close(module.triton_fft(x), expected, rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(module.tle_fft(x), expected, rtol=1e-3, atol=1e-3)
+    torch.testing.assert_close(module.fft(x), expected, rtol=1e-3, atol=1e-3)

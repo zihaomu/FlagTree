@@ -1095,6 +1095,26 @@ def fft_kernel_tle_reg(
 # ---------------
 
 
+def _fft_num_warps(provider: str, m: int, n: int) -> int:
+    target = triton.runtime.driver.active.get_current_target()
+    if target.backend != "hip" or target.arch != "gfx1201" or m < 1024:
+        return 4
+    configs = {
+        "triton": {64: 2, 128: 2, 256: 4, 512: 8, 1024: 8},
+        "tle": {64: 2, 128: 4, 256: 1, 512: 4, 1024: 8},
+    }
+    return configs[provider].get(n, 4)
+
+
+def _fft_provider(m: int, n: int) -> str:
+    target = triton.runtime.driver.active.get_current_target()
+    if target.backend == "hip" and target.arch == "gfx1201":
+        if 4096 <= m <= 8192 and n in (64, 128, 256, 512):
+            return "tle"
+        return "triton"
+    return "tle"
+
+
 def triton_fft(x: torch.Tensor) -> torch.Tensor:
     assert x.device.type == DEVICE.type, "input must be on device"
     assert x.ndim == 2, "input must be 2D (M, N)"
@@ -1130,7 +1150,7 @@ def triton_fft(x: torch.Tensor) -> torch.Tensor:
         m,
         N=n,
         LOG_N=log_n,
-        num_warps=4,
+        num_warps=_fft_num_warps("triton", m, n),
         num_stages=1,
     )
 
@@ -1177,7 +1197,7 @@ def tle_fft(x: torch.Tensor) -> torch.Tensor:
             m,
             N=n,
             LOG_N=log_n,
-            num_warps=4,
+            num_warps=_fft_num_warps("tle", m, n),
             num_stages=1,
         )
     else:
@@ -1194,11 +1214,18 @@ def tle_fft(x: torch.Tensor) -> torch.Tensor:
             m,
             N=n,
             LOG_N=log_n,
-            num_warps=4,
+            num_warps=_fft_num_warps("tle", m, n),
             num_stages=1,
         )
 
     return torch.complex(out_real, out_imag)
+
+
+def fft(x: torch.Tensor) -> torch.Tensor:
+    m, n = x.shape
+    if _fft_provider(m, n) == "triton":
+        return triton_fft(x)
+    return tle_fft(x)
 
 
 # %%
@@ -1245,6 +1272,7 @@ def run_correctness(m: int, n: int, dtype: torch.dtype, complex_input: bool):
 
     y_triton = triton_fft(x)
     y_tle = tle_fft(x)
+    y_selected = fft(x)
     if _HAVE_CUTILE:
         y_cutile = cutile_fft(x)
 
@@ -1263,11 +1291,12 @@ def run_correctness(m: int, n: int, dtype: torch.dtype, complex_input: bool):
     else:
         torch.testing.assert_close(y_triton, ref, rtol=1e-3, atol=1e-3)
         torch.testing.assert_close(y_tle, ref, rtol=1e-3, atol=1e-3)
+        torch.testing.assert_close(y_selected, ref, rtol=1e-3, atol=1e-3)
     if _HAVE_CUTILE:
         torch.testing.assert_close(y_cutile, ref, rtol=1e-3, atol=1e-3)
-        print("Correctness check passed (triton/tle/cutile).")
+        print(f"Correctness check passed (triton/tle/cutile/selected={_fft_provider(m, n)}).")
     else:
-        print("Correctness check passed (triton/tle).")
+        print(f"Correctness check passed (triton/tle/selected={_fft_provider(m, n)}).")
 
 
 if "--only_unit_test" in sys.argv:
