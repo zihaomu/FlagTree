@@ -1134,7 +1134,8 @@ def triton_fft(x: torch.Tensor) -> torch.Tensor:
         num_stages=1,
     )
 
-    if log_n % 2 == 0:
+    num_passes = (log_n + 1) // 2
+    if num_passes % 2 == 0:
         out_real = buf0_real
         out_imag = buf0_imag
     else:
